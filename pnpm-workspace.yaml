@@ -1,0 +1,9 @@
+allowBuilds:
+  d: true
+  e: true
+  i: true
+  l: true
+  r: true
+  s: true
+  t: true
+  v: true

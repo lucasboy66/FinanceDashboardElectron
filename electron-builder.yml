@@ -1,0 +1,18 @@
+appId: com.monday.finance-dashboard
+productName: Monday Finance
+directories:
+  output: release
+files:
+  - dist/**/*
+  - node_modules/**/*
+  - package.json
+extraFiles:
+  - from: .env
+    to: .env
+mac:
+  category: public.app-category.finance
+  target:
+    - dir
+win:
+  target:
+    - dir

@@ -6,14 +6,11 @@ import { UsbWatcher } from './usb-watcher';
 
 // Load .env from multiple candidate locations
 function loadEnv(): Record<string, string> {
+  // extraResources puts .env at Contents/Resources/.env
+  // app.getAppPath() = Contents/Resources/app.asar → ../.env = Contents/Resources/.env
   const candidates = [
-    join(app.getAppPath(), '.env'),
-    join(app.getAppPath(), '..', '.env'),
-    join(app.getPath('exe'), '..', '.env'),
-    join(app.getPath('exe'), '..', '..', '..', '.env'),
-    join(app.getPath('exe'), '..', '..', '..', '..', '.env'),
-    join(app.getPath('userData'), '.env'),
-    join(process.cwd(), '.env'),
+    join(app.getAppPath(), '..', '.env'),   // bundled: Contents/Resources/.env
+    join(process.cwd(), '.env'),            // dev: project root
   ];
   for (const p of candidates) {
     if (existsSync(p)) {

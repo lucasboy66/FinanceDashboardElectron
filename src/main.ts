@@ -1,13 +1,13 @@
-import { app, BrowserWindow, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, session } from 'electron';
 import * as path from 'path';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { UsbWatcher } from './usb-watcher';
 
+const isDev = !app.isPackaged;
+
 // Load .env from multiple candidate locations
 function loadEnv(): Record<string, string> {
-  // extraResources puts .env at Contents/Resources/.env
-  // app.getAppPath() = Contents/Resources/app.asar → ../.env = Contents/Resources/.env
   const candidates = [
     join(app.getAppPath(), '..', '.env'),   // bundled: Contents/Resources/.env
     join(process.cwd(), '.env'),            // dev: project root
@@ -30,6 +30,7 @@ const DASHBOARD_URL = process.env.DASHBOARD_URL || dotenv.DASHBOARD_URL || 'http
 
 let mainWindow: BrowserWindow | null = null;
 let usbWatcher: UsbWatcher | null = null;
+let lastDetectedToken: string | null = null;
 
 // Single instance lock
 const gotLock = app.requestSingleInstanceLock();
@@ -45,47 +46,38 @@ if (!gotLock) {
 }
 
 function createWindow(): void {
-  // Remove default menu (hides View > Developer Tools, Edit, etc.)
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    {
-      label: app.name,
-      submenu: [
-        { role: 'about' },
-        { type: 'separator' },
-        { role: 'quit' },
-      ],
-    },
-    {
-      label: 'Edit',
-      submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' },
-      ],
-    },
-    {
-      label: 'Window',
-      submenu: [
-        { role: 'minimize' },
-        { role: 'close' },
-      ],
-    },
-  ]));
-
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    width: 1920,
+    height: 1080,
+    minWidth: 1280,
+    minHeight: 720,
+    frame: false,
+    titleBarStyle: 'hidden',
     title: 'Monday Finance',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
       devTools: false,
+      allowRunningInsecureContent: false,
+      webSecurity: true,
     },
+  });
+
+  // Block navigation to unexpected URLs (prevents redirect attacks)
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const allowed = new URL(DASHBOARD_URL).origin;
+    if (!url.startsWith(allowed)) event.preventDefault();
+  });
+
+  // Block new window creation (prevents window.open abuse)
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+  // Set strict permissions — deny everything the app doesn't need
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    const allowed = ['clipboard-read', 'clipboard-sanitized-write'];
+    callback(allowed.includes(permission));
   });
 
   mainWindow.loadURL(DASHBOARD_URL);
@@ -97,9 +89,14 @@ function createWindow(): void {
   // Start USB watcher for auto-login
   usbWatcher = new UsbWatcher();
   usbWatcher.onTokenFound((derivedToken) => {
+    lastDetectedToken = derivedToken;
     mainWindow?.webContents.send('usb-token-detected', derivedToken);
   });
   usbWatcher.start();
+
+  // Allow frontend to pull the last token after mounting (fixes race condition)
+  ipcMain.removeHandler('get-current-token');
+  ipcMain.handle('get-current-token', () => lastDetectedToken);
 }
 
 app.whenReady().then(createWindow);

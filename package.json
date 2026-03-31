@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsc && electron .",
     "build": "tsc && electron-builder",
+    "build:mac": "tsc && electron-builder && codesign --deep --force --sign - 'release/mac-arm64/Monday Finance.app'",
     "watch": "tsc -w"
   },
   "devDependencies": {

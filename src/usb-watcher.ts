@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { listRemovableDrives } from './drives';
 import { getDriveSerial } from './drive-serial';
+import { decryptToken } from './token-crypto';
 
 const TOKEN_FILENAME = '.monday-token';
 const POLL_INTERVAL_MS = 2000;
@@ -39,8 +40,15 @@ export class UsbWatcher {
 
         const tokenPath = join(drive.mountpoint, TOKEN_FILENAME);
         try {
-          const uuid = readFileSync(tokenPath, 'utf-8').trim();
-          if (!UUID_V4_REGEX.test(uuid)) continue;
+          const fileContent = readFileSync(tokenPath, 'utf-8').trim();
+
+          // Try decrypt first (encrypted tokens), fall back to plain UUID (legacy)
+          let uuid = decryptToken(fileContent, serial);
+          if (!uuid || !UUID_V4_REGEX.test(uuid)) {
+            // Legacy: file contains plain UUID
+            if (UUID_V4_REGEX.test(fileContent)) uuid = fileContent;
+            else continue;
+          }
 
           const derivedToken = createHash('sha256')
             .update(uuid + serial)
@@ -51,7 +59,7 @@ export class UsbWatcher {
             this.callback?.(derivedToken);
           }
         } catch {
-          // No token file — expected
+          // No token file or decryption failed — expected
         }
       }
     } catch (err) {

@@ -1,5 +1,6 @@
 appId: com.monday.finance-dashboard
 productName: Monday Finance
+copyright: Copyright © 2026 Monday Finance
 directories:
   output: release
 files:
@@ -9,6 +10,9 @@ files:
 extraResources:
   - from: .env
     to: .env
+  - from: ../FinanceDashboardV1/dist
+    to: dashboard
+    filter: ["**/*"]
 mac:
   category: public.app-category.finance
   target:

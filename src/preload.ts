@@ -9,4 +9,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeTokenListeners: () => {
     ipcRenderer.removeAllListeners('usb-token-detected');
   },
+  getCurrentToken: (): Promise<string | null> => ipcRenderer.invoke('get-current-token'),
 });

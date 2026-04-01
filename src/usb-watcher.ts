@@ -30,6 +30,10 @@ export class UsbWatcher {
     }
   }
 
+  clearKnown(): void {
+    this.knownTokens.clear();
+  }
+
   private async scan(): Promise<void> {
     try {
       const drives = await listRemovableDrives();

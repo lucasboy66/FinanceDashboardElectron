@@ -1,8 +1,11 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { app, BrowserWindow, ipcMain, session, Menu } from 'electron';
 import * as path from 'path';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { UsbWatcher } from './usb-watcher';
+import { listRemovableDrives } from './drives';
+import { getDriveSerial } from './drive-serial';
+import { decryptToken } from './token-crypto';
 
 const isDev = !app.isPackaged;
 
@@ -59,7 +62,7 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      devTools: false,
+      devTools: true,
       allowRunningInsecureContent: false,
       webSecurity: true,
     },
@@ -94,12 +97,110 @@ function createWindow(): void {
   });
   usbWatcher.start();
 
+  // On every page load (initial load or reload after JS error), resend cached token
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (lastDetectedToken) {
+      mainWindow?.webContents.send('usb-token-detected', lastDetectedToken);
+    } else {
+      // Page reloaded but watcher already saw the drive — force a re-scan
+      usbWatcher?.clearKnown();
+    }
+  });
+
   // Allow frontend to pull the last token after mounting (fixes race condition)
   ipcMain.removeHandler('get-current-token');
   ipcMain.handle('get-current-token', () => lastDetectedToken);
+
+  // Debug: scan USB and return raw results — call from devtools: await window.electronAPI.debugScan()
+  ipcMain.removeHandler('debug-usb-scan');
+  ipcMain.handle('debug-usb-scan', async () => {
+    try {
+      const drives = await listRemovableDrives();
+
+      // Capture raw ioreg output for diagnosis
+      let rawUsbJson: unknown = null;
+      try {
+        const { execFile: ef } = await import('child_process');
+        const { promisify: prom } = await import('util');
+        const execFileAsync2 = prom(ef);
+        const { stdout } = await execFileAsync2('ioreg', ['-r', '-c', 'IOUSBHostDevice', '-l', '-a']);
+        // Find USB Serial Number and BSD Name positions for diagnosis
+        const serialIdx = stdout.indexOf('<key>USB Serial Number</key>');
+        const bsdIdx = stdout.indexOf('<key>BSD Name</key>');
+        rawUsbJson = {
+          source: 'ioreg_IOUSBHostDevice',
+          totalLength: stdout.length,
+          usbSerialFoundAt: serialIdx,
+          bsdNameFoundAt: bsdIdx,
+          aroundSerial: serialIdx >= 0 ? stdout.slice(Math.max(0, serialIdx - 50), serialIdx + 200) : null,
+          aroundBsd: bsdIdx >= 0 ? stdout.slice(Math.max(0, bsdIdx - 50), bsdIdx + 200) : null,
+        };
+      } catch (e) {
+        rawUsbJson = `ERROR: ${e}`;
+      }
+
+      const results = await Promise.all(drives.map(async (d) => {
+        const serial = await getDriveSerial(d.device).catch(e => `ERROR: ${e}`);
+        const tokenPath = join(d.mountpoint, '.monday-token');
+        const tokenExists = existsSync(tokenPath);
+        let tokenContent: string | null = null;
+        if (tokenExists) {
+          try { tokenContent = readFileSync(tokenPath, 'utf-8').trim(); } catch (e) { tokenContent = `READ_ERROR: ${e}`; }
+        }
+        let decryptResult: string | null = null;
+        let decryptError: string | null = null;
+        if (tokenContent && serial && typeof serial === 'string') {
+          try { decryptResult = decryptToken(tokenContent, serial); } catch (e) { decryptError = String(e); }
+        }
+        return { device: d.device, mountpoint: d.mountpoint, serial, tokenExists, tokenContent, decryptResult, decryptError, lastDetectedToken };
+      }));
+      return { drives: results, lastDetectedToken, rawUsbJson };
+    } catch (e) {
+      return { error: String(e), lastDetectedToken };
+    }
+  });
 }
 
-app.whenReady().then(createWindow);
+function buildMenu(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: 'Monday Finance',
+      submenu: [
+        { label: 'About Monday Finance', role: 'about' },
+        { type: 'separator' },
+        { label: 'Quit', role: 'quit', accelerator: 'CmdOrCtrl+Q' },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        {
+          label: 'Toggle Developer Tools',
+          accelerator: 'CmdOrCtrl+Shift+I',
+          click: () => { mainWindow?.webContents.toggleDevTools(); },
+        },
+        { type: 'separator' },
+        { label: 'Reload', role: 'reload', accelerator: 'CmdOrCtrl+R' },
+        { label: 'Actual Size', role: 'resetZoom' },
+        { label: 'Zoom In', role: 'zoomIn' },
+        { label: 'Zoom Out', role: 'zoomOut' },
+        { type: 'separator' },
+        { label: 'Full Screen', role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { label: 'Minimize', role: 'minimize' },
+        { label: 'Zoom', role: 'zoom' },
+      ],
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+app.whenReady().then(() => { createWindow(); buildMenu(); });
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {

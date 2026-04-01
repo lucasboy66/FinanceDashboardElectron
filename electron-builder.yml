@@ -17,6 +17,8 @@ mac:
   category: public.app-category.finance
   target:
     - dir
+  extendInfo:
+    NSRemovableVolumesUsageDescription: "Monday Finance reads a hardware token from your USB drive to authenticate you."
 win:
   target:
     - dir
